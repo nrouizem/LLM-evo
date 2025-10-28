@@ -1,0 +1,6 @@
+.env
+ideas.md
+explore.ipynb
+/catboost_info
+*.pyc
+*.csv
