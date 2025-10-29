@@ -1,6 +1,6 @@
 # LLM-evo
 
-This project experiments with **LLM-driven evolutionary feature engineering**.  
+This project experiments with **LLM-driven evolution**.  
 Each generation evolves a target using LLMs.
 
 ### Overview
