@@ -141,6 +141,6 @@ def evolve(
         topK = sorted_topK[:K]
         print(bandit)
         if gen != GENS:
-            insights = call_llm_generate_insights(query, memory, new_children)
+            insights = call_llm_generate_insights(query, memory, new_children, model="gpt-5")
 
     return topK
