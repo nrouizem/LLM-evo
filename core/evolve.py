@@ -1,5 +1,7 @@
+import json
 import random
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
+from pathlib import Path
 from utils.router import OpBandit, operator_router
 from utils.client import client
 from roles.insights import call_llm_generate_insights
@@ -11,11 +13,29 @@ def evolve(
         *objective_args,
         K: int = 8,
         C: int = 2,
-        GENS: int = 20
+        GENS: int = 20,
+        log_path: str | None = None
     ):
     """
     Evolution engine.
     """
+    log_path = Path(log_path or "evolve_log.jsonl")
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log_entry(entry_type, generation, content, score, op=None):
+        record = {
+            "type": entry_type,
+            "generation": generation,
+            "score": score,
+            "text": str(content)
+        }
+        if op is not None:
+            record["operator"] = op
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            json.dump(record, log_file)
+            log_file.write("\n")
+            log_file.flush()
+
     llm_workers  = min(12, K*C)
     eval_workers = 1
     parallel_eval = eval_workers > 1
@@ -30,19 +50,25 @@ def evolve(
             for fut in as_completed(fut2seed):
                 s = fut2seed[fut]
                 try:
-                    topK.append((s, fut.result()))
+                    score = fut.result()
+                    topK.append((s, score))
                     print("added seed:")
                     print(s)
                 except Exception:
-                    topK.append((s, 0.0))
+                    score = 0.0
+                    topK.append((s, score))
+                log_entry("seed", 0, s, score)
     else:
         for s in seeds:
             try:
-                topK.append((s, objective(s, *objective_args)))
+                score = objective(s, *objective_args)
+                topK.append((s, score))
                 print("added seed:")
                 print(s)
             except Exception:
-                topK.append((s, 0.0))
+                score = 0.0
+                topK.append((s, score))
+            log_entry("seed", 0, s, score)
 
     memory  = random.sample(topK, k=min(1, len(topK)))
     topK    = sorted(topK, key=lambda x: x[1], reverse=True)[:K]
@@ -91,6 +117,7 @@ def evolve(
                     reward = score - max(p1s, p2s) if p1s is not None and p2s is not None else score
                     bandit.update(op, reward)
                     new_children.append((mutation, score))
+                    log_entry("mutation", gen, mutation, score, op=op)
                     print(f"[{op}] reward={reward:+.4f}  score={score:.4f}")
         
         else:
@@ -126,6 +153,7 @@ def evolve(
                     reward = score - max(p1s, p2s) if p1s is not None and p2s is not None else score
                     bandit.update(op, reward)
                     new_children.append((mutation, score))
+                    log_entry("mutation", gen, mutation, score, op=op)
                     print(f"[{op}] reward={reward:+.4f}  score={score:.4f}")
                     
         # 4) selection + memory + insights (unchanged)

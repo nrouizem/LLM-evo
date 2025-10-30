@@ -74,8 +74,11 @@ def full_obj(code, df: pd.DataFrame, y_log: pd.Series):
 
 if __name__ == "__main__":
 
+    # smaller size for faster eval
+    size = 100_000
+
     # Load data; minor transform
-    df = pd.read_csv("examples/calories/train.csv").drop(columns="id")
+    df = pd.read_csv("examples/calories/train.csv").drop(columns="id")[:size]
 
     label_enc = LabelEncoder()
     df['Sex'] = label_enc.fit_transform(df['Sex'])
@@ -93,21 +96,21 @@ if __name__ == "__main__":
     base_score = rmsle(np.expm1(y_log), np.expm1(base_oof)) * 1000
 
     # define query
-    query = """You are mutating a Python function that returns a new feature for a tabular dataset.
+    query = f"""You are mutating a Python function that returns a new feature for a tabular dataset.
             The available columns are: ["Age", "Weight", "Height", "Duration", "Heart_Rate", "Body_Temp", "Sex"].
             "Sex" and "Age" are ints; all other columns are floats. "Sex" is 1 for male; 0 for female.
             The ultimate objective is to predict the "Calories" target; you may therefore not use the target directly.
             An XGBoost model will be used to evaluate your feature; the evaluation will compare the RMSLE of the original dataframe on its own compared to the dataframe plus your feature.
-            The data has length 750,000. Be aware of this as you manipulate the data; don't build a (750000, 750000) array, for example.
+            The data has length {size}. Be aware of this as you manipulate the data; consider the memory requirement of any new arrays you create, such as a ({size}, {size}) array, for example.
             You may use only the columns I said are available to you. You may perform any operation, including numpy or pandas operations, on one or more of the provided columns to construct the new feature.
             When using numpy or pandas operations, ensure compatibility with the latest package versions.
             You will be provided with an existing function. Return a new function without any extraneous text. The function should return a single feature."""
     
     seeds = []
-    for i, col in enumerate(["Age", "Weight", "Height", "Duration", "Heart_Rate", "Body_Temp", "Sex"][:2]):
+    for i, col in enumerate(df.columns):
         seeds.append(f"def build_feature(df):\n  return df['{col}']")
 
     # run evolution
     results = evolve(query, full_obj, seeds, df, y_log, K=8, C=2, GENS=10)
-    with open("examples/calories/results.json", 'w') as f:
+    with open("examples/feat_eval/results.json", 'w') as f:
         json.dump(results, f)
