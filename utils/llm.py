@@ -6,7 +6,7 @@ from openai import OpenAI
 
 from utils.client import client as default_client
 
-DEFAULT_MODEL = "gpt-5-mini"
+DEFAULT_MODEL = "gpt-5-nano"
 
 
 def resolve_model_client(

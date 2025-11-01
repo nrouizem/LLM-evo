@@ -1,10 +1,67 @@
-import json
-import random
+import json, random, numpy as np
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from pathlib import Path
 from utils.router import OpBandit, operator_router
 from utils.client import client
 from roles.insights import call_llm_generate_insights
+from core.objective_mod import validate_objective, normalize_objective
+
+def log_entry(entry_type, generation, content, score, log_path, op=None):
+    score_or_zscore = "score" if entry_type == "seed" else "zscore"
+    record = {
+        "type": entry_type,
+        "generation": generation,
+        score_or_zscore: score,
+        "text": str(content)
+    }
+    if op is not None:
+        record["operator"] = op
+    with open(log_path, "a", encoding="utf-8") as log_file:
+        json.dump(record, log_file)
+        log_file.write("\n")
+        log_file.flush()
+
+def compute_seeds(
+        objective,
+        seeds,
+        eval_workers,
+        log_path,
+        *objective_args,
+    ):
+    """
+    Seed computations.
+    """
+    parallel_eval = eval_workers > 1
+    topK = []
+
+    if parallel_eval:
+        with ProcessPoolExecutor(max_workers=eval_workers) as pool_eval:
+            fut2seed = {pool_eval.submit(objective, s, *objective_args): s for s in seeds}
+            print("submitted")
+            for fut in as_completed(fut2seed):
+                s = fut2seed[fut]
+                try:
+                    score = fut.result()
+                    topK.append((s, score))
+                    print("added seed:")
+                    print(s)
+                except Exception:
+                    score = 0.0
+                    topK.append((s, score))
+                log_entry("seed", 0, s, score, log_path)
+    else:
+        for s in seeds:
+            try:
+                score = objective(s, *objective_args)
+                topK.append((s, score))
+                print("added seed:")
+                print(s)
+            except Exception:
+                score = 0.0
+                topK.append((s, score))
+            log_entry("seed", 0, s, score, log_path)
+    
+    return topK
 
 def evolve(
         query: str,
@@ -22,53 +79,22 @@ def evolve(
     log_path = Path(log_path or "evolve_log.jsonl")
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    def log_entry(entry_type, generation, content, score, op=None):
-        record = {
-            "type": entry_type,
-            "generation": generation,
-            "score": score,
-            "text": str(content)
-        }
-        if op is not None:
-            record["operator"] = op
-        with open(log_path, "a", encoding="utf-8") as log_file:
-            json.dump(record, log_file)
-            log_file.write("\n")
-            log_file.flush()
 
     llm_workers  = min(12, K*C)
     eval_workers = 1
     parallel_eval = eval_workers > 1
     bandit = OpBandit(init_probs=[0.5, 0.1, 0.3, 0.1])
-    
-    # 0) initial seed evals (use eval pool)
-    topK = []
-    if parallel_eval:
-        with ProcessPoolExecutor(max_workers=eval_workers) as pool_eval:
-            fut2seed = {pool_eval.submit(objective, s, *objective_args): s for s in seeds}
-            print("submitted")
-            for fut in as_completed(fut2seed):
-                s = fut2seed[fut]
-                try:
-                    score = fut.result()
-                    topK.append((s, score))
-                    print("added seed:")
-                    print(s)
-                except Exception:
-                    score = 0.0
-                    topK.append((s, score))
-                log_entry("seed", 0, s, score)
-    else:
-        for s in seeds:
-            try:
-                score = objective(s, *objective_args)
-                topK.append((s, score))
-                print("added seed:")
-                print(s)
-            except Exception:
-                score = 0.0
-                topK.append((s, score))
-            log_entry("seed", 0, s, score)
+
+    # initial seed evals; make sure we have 10 seeds
+    # TODO: for some reason there's an issue with random states even though I haven't set them
+    num_seeds = 10
+    if len(seeds) < num_seeds:
+        seeds.extend(random.choices(seeds, k=(num_seeds - len(seeds))))
+    topK = compute_seeds(objective, seeds, eval_workers, log_path, *objective_args)
+
+    # normalize objective using seeds
+    scores = [score for _, score in topK]
+    norm_objective = normalize_objective(objective, np.mean(scores), np.std(scores))
 
     memory  = random.sample(topK, k=min(1, len(topK)))
     topK    = sorted(topK, key=lambda x: x[1], reverse=True)[:K]
@@ -101,7 +127,7 @@ def evolve(
                 for gfut in as_completed(gen_futs):
                     try:
                         op, mutation, p1s, p2s = gfut.result()
-                        efut = pool_eval.submit(objective, mutation, *objective_args)
+                        efut = pool_eval.submit(norm_objective, mutation, *objective_args)
                         eval_futs[efut] = (op, mutation, p1s, p2s)
                     except Exception as e:
                         print(f"generation error: {e}")
@@ -117,7 +143,7 @@ def evolve(
                     reward = score - max(p1s, p2s) if p1s is not None and p2s is not None else score
                     bandit.update(op, reward)
                     new_children.append((mutation, score))
-                    log_entry("mutation", gen, mutation, score, op=op)
+                    log_entry("mutation", gen, mutation, score, log_path, op=op)
                     print(f"[{op}] reward={reward:+.4f}  score={score:.4f}")
         
         else:
@@ -145,7 +171,7 @@ def evolve(
                         continue
 
                     try:
-                        score = objective(mutation, *objective_args)
+                        score = norm_objective(mutation, *objective_args)
                     except Exception as e:
                         print(f"eval error: {e}")
                         score = 0.0
@@ -153,10 +179,10 @@ def evolve(
                     reward = score - max(p1s, p2s) if p1s is not None and p2s is not None else score
                     bandit.update(op, reward)
                     new_children.append((mutation, score))
-                    log_entry("mutation", gen, mutation, score, op=op)
+                    log_entry("mutation", gen, mutation, score, log_path, op=op)
                     print(f"[{op}] reward={reward:+.4f}  score={score:.4f}")
                     
-        # 4) selection + memory + insights (unchanged)
+        # 4) selection + memory + insights
         full = topK + new_children
         sorted_topK = sorted(full, key=lambda x: x[1], reverse=True)
         pop_size = len(sorted_topK)

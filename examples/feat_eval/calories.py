@@ -2,8 +2,9 @@ import pandas as pd, numpy as np
 from sklearn.preprocessing import LabelEncoder
 from sklearn.model_selection import KFold
 from xgboost import XGBRegressor
-import warnings, json
+import warnings, json, os
 warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 from sklearn.metrics import root_mean_squared_log_error as rmsle
 
 from utils.run_llm_code import run_llm_code
@@ -14,8 +15,8 @@ from core.evolve import evolve
 # == UTILITY FUNCTIONS ==
 # =======================
 
-def make_splits(n, folds=5, seed=1):
-    kf = KFold(n_splits=folds, shuffle=True, random_state=seed)
+def make_splits(n, folds=5):
+    kf = KFold(n_splits=folds, shuffle=True)
     return list(kf.split(np.arange(n)))
 
 def xgb_oof(X, y, splits, gpu=True):
@@ -31,7 +32,6 @@ def xgb_oof(X, y, splits, gpu=True):
             reg_lambda=3.0,
             subsample=0.8,
             colsample_bytree=0.8,
-            random_state=1,
             tree_method='hist',
             device='cuda' if gpu else 'cpu',
             eval_metric='rmse',
@@ -59,14 +59,45 @@ def xgb_gain(feature, df: pd.DataFrame, y_log: pd.Series):
     delta = base_score - score
     return delta
 
-def full_obj(code, df: pd.DataFrame, y_log: pd.Series):
+def full_obj(code, df: pd.DataFrame, y_log: pd.Series, jsonl_path="examples/feat_eval/calories_metrics.jsonl"):
     try:
         X = df.copy()
-        code_output = run_llm_code(code, X)
-        res = xgb_gain(code_output, X, y_log)
+        feat = run_llm_code(code, X)
+        res = xgb_gain(feat, X, y_log)
+
         if not np.isfinite(res):
             raise RuntimeError("Score is NaN")
-        return res
+        
+        s = pd.Series(feat)
+        ag = dict(
+            var=float(np.var(s)),
+            missing_rate=float(s.isna().mean()) if isinstance(s, pd.Series) else 0.0,
+            pearson_r=float(np.corrcoef(y_log, s)[0,1]) if np.isfinite(s).all() else 0.0,
+            spearman_r=float(pd.Series(y_log).corr(pd.Series(s), method='spearman')),
+            max_abs_corr_with_existing=float(np.max(np.abs(np.corrcoef(X.values.T, s.values)[0:-1,-1]))),
+            skew=float(pd.Series(s).skew()),
+            kurtosis=float(pd.Series(s).kurt())
+        )
+
+        record = {
+            "code": code,
+            "dtype": str(s.dtype) if isinstance(s, pd.Series) else "unknown",
+            "metrics": {
+                "xgb": {
+                    "delta_rmsle": float(res),
+                },
+                "agnostic": ag,
+                "sanity": {
+                    "nan_rate": float(np.mean(~np.isfinite(np.asarray(s))))
+                }
+            }
+        }
+
+        os.makedirs(os.path.dirname(jsonl_path), exist_ok=True)
+        with open(jsonl_path, "a") as f:
+            f.write(json.dumps(record) + "\n")
+
+        return float(res)
     except Exception as e:
         print(e)
         return 0.0
@@ -78,7 +109,7 @@ if __name__ == "__main__":
     size = 100_000
 
     # Load data; minor transform
-    df = pd.read_csv("examples/calories/train.csv").drop(columns="id")[:size]
+    df = pd.read_csv("examples/feat_eval/data/calories_train.csv").drop(columns="id")[:size]
 
     label_enc = LabelEncoder()
     df['Sex'] = label_enc.fit_transform(df['Sex'])
@@ -90,7 +121,7 @@ if __name__ == "__main__":
     # Compute baseline score
     df0 = df.copy()
     y_log = pd.Series(np.log1p(y))
-    splits = make_splits(len(df0), folds=5, seed=1)
+    splits = make_splits(len(df0), folds=5)
     print("Computing baseline...")
     base_oof = xgb_oof(df0, y_log, splits)
     base_score = rmsle(np.expm1(y_log), np.expm1(base_oof)) * 1000
@@ -111,6 +142,14 @@ if __name__ == "__main__":
         seeds.append(f"def build_feature(df):\n  return df['{col}']")
 
     # run evolution
-    results = evolve(query, full_obj, seeds, df, y_log, K=8, C=2, GENS=10)
-    with open("examples/feat_eval/results.json", 'w') as f:
-        json.dump(results, f)
+    results = evolve(
+        query,
+        full_obj,
+        seeds,
+        df,
+        y_log,
+        K=10,
+        C=4,
+        GENS=30,
+        log_path="examples/feat_eval/calories_log.jsonl"
+    )
