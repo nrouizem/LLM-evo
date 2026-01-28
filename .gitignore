@@ -1,6 +1,6 @@
 .env
-ideas.md
-explore.ipynb
+scratch/
+llm-evo/examples/feat_eval
 /catboost_info
 *.pyc
 *.csv
