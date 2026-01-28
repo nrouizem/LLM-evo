@@ -1,5 +1,7 @@
 .env
+.vscode/
 scratch/
+outputs/
 llm-evo/examples/feat_eval
 /catboost_info
 *.pyc
