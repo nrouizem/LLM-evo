@@ -2,6 +2,7 @@
 
 This project experiments with **LLM-driven evolution**.  
 Each generation evolves a target using LLMs.
+Take a look at [this example](examples/func_opt/) which optimizes a complex operation on large NumPy arrays.
 
 ### Overview
 - Combines mutation, crossover, exploration, and insight-based strategies.  
