@@ -31,7 +31,7 @@ class OpBandit:
         self.priors = dict(zip(ops, init_probs))
         self.probs = init_probs.copy()
 
-    def pick(self, tau=0.5):
+    def pick(self, tau=0.3):
         avgs = np.array([self.R[o]/self.N[o] for o in self.ops])
         # temperature only on reward term; prior added unscaled
         logits = (avgs / max(tau, 1e-8)) + np.log(np.array([self.priors[o] for o in self.ops]) + 1e-8)

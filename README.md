@@ -15,10 +15,15 @@ Each generation evolves a target using LLMs.
 - Minimize manual tuning or model-specific heuristics.  
 
 ### Current Focus
-- Testing on **tabular data** (e.g., the Kaggle Calories dataset).  
-- LLMs generate candidate `build_feature(df)` functions.  
-- Features are scored by **correlation** or **model improvement**.  
+- Testing on **optimizing NumPy operations on large arrays**
+  - LLMs generate candidate `build_func(x)` functions
+  - Functions are scored by **correctness** and **performance**
+  - Single-threaded function performance increased by **27%** at large `n`
+- Testing on **tabular data** (e.g., the Kaggle Calories dataset)
+  - LLMs generate candidate `build_feature(df)` functions
+  - Features are scored by **correlation** or **model improvement**
+  - Features improved downstream model performance by **5%+**
 
 ### ⚠️ Status
-- Early research prototype  
+- Early prototype  
 - Actively evolving and may change structure or objectives

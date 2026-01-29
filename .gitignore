@@ -1,6 +1,8 @@
 .env
-ideas.md
-explore.ipynb
-/catboost_info
+.vscode/
+scratch/
+__pycache__/
 *.pyc
+outputs/
+examples/feat_eval/
 *.csv
