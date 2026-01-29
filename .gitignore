@@ -1,8 +1,8 @@
 .env
 .vscode/
 scratch/
-outputs/
-examples/feat_eval
-/catboost_info
+__pycache__/
 *.pyc
+outputs/
+examples/feat_eval/
 *.csv
